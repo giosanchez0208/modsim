@@ -41,7 +41,7 @@ class JeepRoute:
         self.jeepDestination = grid.get_grid_coors(*self.route_points[next_index])
         
         # Movement speed (pixels per second)
-        self.speed = 100
+        self.speed = 200
         
         # Track exact position with floating point values for smoother movement
         self.exact_position = list(self.jeepLocation)
@@ -173,16 +173,14 @@ class JeepRoute:
         dy = self.jeepDestination[1] - self.exact_position[1]
 
         # Determine rotation angle (clockwise, based on intended direction)
-        if abs(dx) > abs(dy):  # Horizontal movement
-            if dx > 0:
-                angle = 180 # Right
-            else:
-                angle = 0 # Left
-        else:  # Vertical movement
-            if dy > 0:
-                angle = 90 # Down
-            else:
-                angle = 270 # Up
+        if self.isMovingAlongX and self.isInReverse:
+            angle = 180 # Right
+        if self.isMovingAlongX and not self.isInReverse:
+            angle = 0 # Left
+        if not self.isMovingAlongX and not self.isInReverse:
+            angle = 90 # Down
+        if not self.isMovingAlongX and self.isInReverse:
+            angle = 270 # Up
 
         # Apply rotation
         rotated_surface = pygame.transform.rotate(jeep_surface, angle)

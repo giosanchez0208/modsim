@@ -1,7 +1,7 @@
 import pygame
 import grid
 import sys
-from jeeproute import JeepRoute  # Import the route generator
+from jeeproute import JeepRoute
 
 # INITIALIZATIONS ===================================
 pygame.init()
@@ -38,7 +38,6 @@ routes = [
 running = True
 last_time = pygame.time.get_ticks()
 
-test = 1000
 while running:
     # Calculate delta time (time elapsed since last frame) in seconds
     current_time = pygame.time.get_ticks()
@@ -48,25 +47,33 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-    
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            # When mouse is clicked, capture position and set it as start point
+            if event.button == 1:  # Left click for start point
+                # Convert screen position to grid position
+                grid_width = grid.GRID_COLS * grid.CELL_SIZE
+                grid_height = grid.GRID_ROWS * grid.CELL_SIZE
+                grid_x = (grid.SCREEN_WIDTH - grid_width) // 2
+                grid_y = (grid.SCREEN_HEIGHT - grid_height) // 2 - 25
+                
+                x = (event.pos[0] - grid_x) // grid.CELL_SIZE
+                y = (event.pos[1] - grid_y) // grid.CELL_SIZE
+                
+                # Ensure coordinates are within grid bounds
+                x = max(0, min(x, grid.GRID_COLS))
+                y = max(0, min(y, grid.GRID_ROWS))
+              
     # Draw the grid
     grid.draw_grid(screen)
     
     # Update all jeeps with delta time
     for route in routes:
         route.update(dt)
-    
-    if test >= 0:
-        test -= 100;            
-    else:
-        for route in routes:
-            route.modifyPassenger()
-        test = 1000
-        
+
     # Draw all jeep routes
     for route in routes:
         route.drawRoute(screen)
-        
+
     # Draw all jeeps
     for route in routes:
         route.drawJeep(screen)
