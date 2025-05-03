@@ -231,6 +231,11 @@ class Passenger:
             self.destination = (random.randint(0, grid_size - 1), random.randint(0, grid_size - 1))
             if self.origin != self.destination:
                 break
+    
+    def set_trip_between_areas(self, origin, destination):
+        """Set a trip between specific areas."""
+        self.origin = origin
+        self.destination = destination
 
     def update_position(self, travel_graph, dt, jeep_routes):
         if self.state == "arrived" or not self.route:
@@ -247,7 +252,7 @@ class Passenger:
 
     
     def _handle_walking(self, travel_graph, current_node, dt):
-        # If there is no “next” node, we’ve arrived ---
+        # If there is no "next" node, we've arrived ---
         if self.current_step >= len(self.route) - 1:
             self.state = "arrived"
             return
