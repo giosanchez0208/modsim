@@ -1,10 +1,14 @@
 import heapq
+import math
 import random
+import grid
+import pygame
 
-WALKING_COST = 16
-JEEPNEY_COST = 4
-TRANSITION_PENALTY = 8
-TRANSFER_PENALTY = 16
+WALKING_COST = 22
+JEEPNEY_COST = 2
+TRANSITION_PENALTY = 30
+TRANSFER_PENALTY = 30
+WALKING_SPEED = 50
 
 class TravelGraph:
     def __init__(self):
@@ -197,13 +201,20 @@ class TravelGraph:
             "walking_segments": walking_segments,
             "transfers": transfers
         }
-
 class Passenger:
     def __init__(self, origin=None, destination=None):
         self.origin = origin
         self.destination = destination
         self.route = []
         self.cost = float('inf')
+        self.current_step = 0
+        self.position = None
+        self.current_jeep = None
+        self.alight_point = None
+        self.speed = WALKING_COST  # Assuming WALKING_COST represents speed
+        self.state = "waiting"
+        # Track where to alight once on a jeep
+        self._alight_step_index = None
 
     def plan_route(self, travel_graph):
         if not self.origin or not self.destination:
@@ -220,3 +231,124 @@ class Passenger:
             self.destination = (random.randint(0, grid_size - 1), random.randint(0, grid_size - 1))
             if self.origin != self.destination:
                 break
+
+    def update_position(self, travel_graph, dt, jeep_routes):
+        if self.state == "arrived" or not self.route:
+            return
+
+        current_node = self.route[self.current_step]
+
+        if self.state == "waiting_jeep":
+            self._handle_jeep_boarding(current_node, jeep_routes)
+        elif self.state == "on_jeep":
+            self._handle_jeep_ride()
+        else:
+            self._handle_walking(travel_graph, current_node, dt)
+
+    
+    def _handle_walking(self, travel_graph, current_node, dt):
+        # If there is no “next” node, we’ve arrived ---
+        if self.current_step >= len(self.route) - 1:
+            self.state = "arrived"
+            return
+
+        # Get grid coordinates from current node (handles transition nodes)
+        if isinstance(current_node, tuple) and len(current_node) == 3:
+            grid_coords = current_node[0]
+        else:
+            grid_coords = current_node
+
+        # Initialize position with screen coordinates
+        if self.position is None:
+            self.position = grid.get_grid_coors(*grid_coords)
+
+        # Get next node's grid coordinates
+        next_node = self.route[self.current_step + 1]
+        if isinstance(next_node, tuple) and len(next_node) == 3:
+            target_grid = next_node[0]
+        else:
+            target_grid = next_node
+        
+        # Convert next node to screen coordinates
+        target_pos = grid.get_grid_coors(*target_grid)
+
+        # Calculate movement
+        dx = target_pos[0] - self.position[0]
+        dy = target_pos[1] - self.position[1]
+        distance = math.sqrt(dx**2 + dy**2)
+
+        if distance > 0:
+            step = self.speed * dt
+            ratio = min(step / distance, 1.0)
+            self.position = (
+                self.position[0] + dx * ratio,
+                self.position[1] + dy * ratio
+            )
+
+        if distance < 2:  # Reached node
+            self.current_step += 1
+            if isinstance(next_node, tuple) and len(next_node) == 3 and next_node[1] == 'transition':
+                self.state = "waiting_jeep"
+                
+    def _handle_jeep_boarding(self, current_node, jeep_routes):
+        _, _, jeep_id = current_node
+        target_jeep = jeep_routes[jeep_id]
+
+        # Check distance using screen coordinates
+        dx = target_jeep.jeepLocation[0] - self.position[0]
+        dy = target_jeep.jeepLocation[1] - self.position[1]
+        distance = math.sqrt(dx**2 + dy**2)
+
+        # Only board if jeep is close enough AND has capacity
+        if distance < 5:
+            if target_jeep.passengerAmt < target_jeep.MAX_CAPACITY:
+                self.state = "on_jeep"
+                self.current_jeep = target_jeep
+                self.current_jeep.modifyPassenger(1)
+
+                # Find & stash the last 'transition' step for this jeep
+                last_trans_idx = None
+                for idx in range(self.current_step, len(self.route)):
+                    node = self.route[idx]
+                    if (isinstance(node, tuple) and len(node) == 3
+                            and node[1] == 'transition'
+                            and node[2] == jeep_id):
+                        last_trans_idx = idx
+
+                # Stash it for the ride handler
+                self._alight_step_index = last_trans_idx
+
+                # Compute exact alight coordinate
+                if last_trans_idx is not None and last_trans_idx + 1 < len(self.route):
+                    alight_grid = self.route[last_trans_idx + 1]
+                    self.alight_point = grid.get_grid_coors(*(
+                        alight_grid[0] if len(alight_grid) == 3 else alight_grid
+                    ))
+            else:
+                # Stay in waiting_jeep state if jeep is full
+                self.state = "waiting_jeep"
+
+    def _handle_jeep_ride(self):
+        # Update position to jeep's current location
+        self.position = self.current_jeep.jeepLocation
+        
+        # Check if reached alight point and we know where that is
+        current_jeep_grid_pos = self.current_jeep.route_points[self.current_jeep.current_route_index]
+        current_jeep_screen_pos = grid.get_grid_coors(*current_jeep_grid_pos)
+        
+        if self.alight_point is not None and current_jeep_screen_pos == self.alight_point:
+            self.current_jeep.modifyPassenger(-1)
+            self.current_jeep = None
+
+            # Jump to just after the transition we alighted from (if we stored it)
+            if self._alight_step_index is not None:
+                self.current_step = self._alight_step_index + 1
+            self.state = "walking"
+
+    def draw(self, screen):
+        if self.state in ("on_jeep", "arrived"):
+            return
+        pygame.draw.rect(screen, (96, 96, 96),
+                         (self.position[0] - 2,
+                          self.position[1] - 2,
+                          5, 5))

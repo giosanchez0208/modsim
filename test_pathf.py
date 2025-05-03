@@ -13,14 +13,12 @@ pygame.display.set_caption("Pathfinding Test - Passenger Journey")
 clock = pygame.time.Clock()
 
 JEEP_COLORS = [
-    (255, 0, 0),     # Red
-    (0, 0, 255),     # Blue
-    (0, 128, 0),     # Green
-    (255, 165, 0),   # Orange
-    (128, 0, 128),   # Purple
-    (0, 128, 128),   # Teal
-    (128, 128, 0),   # Olive
-    (255, 20, 147)   # Pink
+    (110, 115, 209),  # ROYAL_BLUE
+    (252, 35, 20),    # RED
+    (31, 149, 61),    # GREEN
+    (248, 167, 200),  # PINK
+    (248, 193, 38),   # YELLOW
+    (163, 163, 163)   # GRAY
 ]
 
 WALKING_COLOR = (100, 100, 100)      # Gray for walking
@@ -225,10 +223,14 @@ def print_journey_analysis(journey_segments):
         final_destination = journey_segments[-1]["to_node"]
         if isinstance(final_destination, tuple) and len(final_destination) == 2:
             print(f"{step_num}. Arrived at destination {final_destination}")
-
+            
 def main():
     # Generate initial test case
     jeeps, path, start_point, end_point, all_route_points, journey_segments, travel_graph = generate_test_case()
+    
+    # Create passenger
+    passenger = Passenger(origin=start_point, destination=end_point)
+    passenger.plan_route(travel_graph)
     
     # Instructions text
     font = pygame.font.SysFont('Arial', 24)
@@ -237,9 +239,15 @@ def main():
     show_info = False
     info_panel = None
     
+    # Clock for timing
+    clock = pygame.time.Clock()
+    
     # Main game loop
     running = True
     while running:
+        # Get delta time for smooth movement
+        dt = clock.tick(60) / 1000.0  # Convert to seconds
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -248,9 +256,19 @@ def main():
                     running = False
                 elif event.key == pygame.K_SPACE:  # Press SPACE to regenerate
                     jeeps, path, start_point, end_point, all_route_points, journey_segments, travel_graph = generate_test_case()
+                    # Reset passenger with new path
+                    passenger = Passenger(origin=start_point, destination=end_point)
+                    passenger.plan_route(travel_graph)
                     show_info = False
                 elif event.key == pygame.K_i:  # Press I to toggle journey info
                     show_info = not show_info
+        
+        # Update jeeps
+        for jeep in jeeps:
+            jeep.update(dt)
+            
+        # Update passenger
+        passenger.update_position(travel_graph, dt, jeeps)
         
         # Draw everything
         screen.fill((255, 255, 255))  # Clear with white background
@@ -270,6 +288,10 @@ def main():
         # Draw path with different colors for walking, boarding, riding, alighting
         draw_enhanced_path(screen, path, all_route_points, jeeps, journey_segments)
         
+        # Draw jeeps
+        for jeep in jeeps:
+            jeep.drawJeep(screen)
+        
         # Draw start and end points (always on top)
         draw_point(screen, start_point, (0, 255, 0), 10)  # Green for start
         draw_point(screen, end_point, (255, 0, 255), 10)  # Magenta for end
@@ -278,12 +300,18 @@ def main():
         if show_info:
             draw_journey_info(screen, journey_segments, jeeps)
         
+        # Draw passenger
+        if passenger.position and passenger.state:
+            # Draw red outlined circle around passenger
+            pygame.draw.circle(screen, (255, 0, 0), 
+                             (int(passenger.position[0]), int(passenger.position[1])), 
+                             25, 3)  # Red outlined circle with radius 15 and thickness 3
+            # Draw the passenger
+            passenger.draw(screen)
+            
         # Update display
         pygame.display.flip()
-        clock.tick(60)
-    
-    pygame.quit()
-    sys.exit()
+        
 
 def draw_route_arrows(screen, jeep):
     # Draw direction arrows along the jeep route

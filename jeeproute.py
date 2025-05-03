@@ -3,6 +3,7 @@ import pygame
 import grid
 import math
 
+JEEP_SPEED = 150
 class JeepRoute:
     def __init__(self, color=(255, 0, 0), route=None, route_points=None):
         
@@ -41,13 +42,13 @@ class JeepRoute:
         self.jeepDestination = grid.get_grid_coors(*self.route_points[next_index])
         
         # Movement speed (pixels per second)
-        self.speed = 200
+        self.speed = JEEP_SPEED
         
         # Track exact position with floating point values for smoother movement
         self.exact_position = list(self.jeepLocation)
         
         # PASSENGER ================================================================
-        
+        self.MAX_CAPACITY = 16  # "Walo-Walo"
         self.passengerAmt = 0
         
     def randomizeRoute(self): 
@@ -174,9 +175,9 @@ class JeepRoute:
 
         # Determine rotation angle (clockwise, based on intended direction)
         if self.isMovingAlongX and self.isInReverse:
-            angle = 180 # Right
+            angle = 0 # Right
         if self.isMovingAlongX and not self.isInReverse:
-            angle = 0 # Left
+            angle = 180 # Left
         if not self.isMovingAlongX and not self.isInReverse:
             angle = 90 # Down
         if not self.isMovingAlongX and self.isInReverse:
