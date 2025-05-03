@@ -9,7 +9,7 @@ pygame.init()
 # CONSTANTS =========================================
 SCREEN_WIDTH = 1600
 SCREEN_HEIGHT = 900
-FPS = 60  # Increased FPS for smoother animation
+FPS = 60
 
 # COLORS (from the screenshot) ======================
 ROYAL_BLUE = (110, 115, 209)  
@@ -47,21 +47,6 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            # When mouse is clicked, capture position and set it as start point
-            if event.button == 1:  # Left click for start point
-                # Convert screen position to grid position
-                grid_width = grid.GRID_COLS * grid.CELL_SIZE
-                grid_height = grid.GRID_ROWS * grid.CELL_SIZE
-                grid_x = (grid.SCREEN_WIDTH - grid_width) // 2
-                grid_y = (grid.SCREEN_HEIGHT - grid_height) // 2 - 25
-                
-                x = (event.pos[0] - grid_x) // grid.CELL_SIZE
-                y = (event.pos[1] - grid_y) // grid.CELL_SIZE
-                
-                # Ensure coordinates are within grid bounds
-                x = max(0, min(x, grid.GRID_COLS))
-                y = max(0, min(y, grid.GRID_ROWS))
               
     # Draw the grid
     grid.draw_grid(screen)

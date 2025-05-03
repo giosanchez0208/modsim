@@ -3,18 +3,15 @@ import sys
 import random
 import math
 from jeeproute import JeepRoute
-from passenger import TravelGraph
+from passenger import TravelGraph, Passenger
 import grid
 
-# Initialize pygame
 pygame.init()
 
-# Set up the screen
 screen = pygame.display.set_mode((grid.SCREEN_WIDTH, grid.SCREEN_HEIGHT))
-pygame.display.set_caption("Pathfinding Test")
+pygame.display.set_caption("Pathfinding Test - Passenger Journey")
 clock = pygame.time.Clock()
 
-# Define some colors
 JEEP_COLORS = [
     (255, 0, 0),     # Red
     (0, 0, 255),     # Blue
@@ -26,24 +23,31 @@ JEEP_COLORS = [
     (255, 20, 147)   # Pink
 ]
 
-# Path colors
-WALKING_COLOR = (100, 100, 100)  # Gray for walking
-RIDING_COLORS = {}  # Will be filled with jeep route colors
+WALKING_COLOR = (100, 100, 100)      # Gray for walking
+BOARDING_COLOR = (50, 205, 50)       # Lime Green for boarding
+ALIGHTING_COLOR = (255, 69, 0)       # OrangeRed for alighting
+TRANSFER_COLOR = (255, 215, 0)       # Gold for transfers
+
+# Define action types for better path analysis
+ACTION_WALK = "walk"
+ACTION_BOARD = "board"
+ACTION_RIDE = "ride"
+ACTION_ALIGHT = "alight"
+ACTION_TRANSFER = "transfer"
 
 def generate_test_case():
-
     num_jeeps = random.randint(2, 5)
     
     jeeps = []
     for i in range(num_jeeps):
-        color = JEEP_COLORS[i % len(JEEP_COLORS)] #randomize colors
+        color = JEEP_COLORS[i % len(JEEP_COLORS)]
         jeep = JeepRoute(color=color)
         jeeps.append(jeep)
     
     # Set up the travel graph
     travel_graph = TravelGraph()
     
-    # Add all jeeps to the travel graph and store route points for later
+    # Add jeeps to travel graph
     all_route_points = {}
     for i, jeep in enumerate(jeeps):
         # Use the index as a unique jeep_id
@@ -54,6 +58,9 @@ def generate_test_case():
                 all_route_points[point].append(i)
             else:
                 all_route_points[point] = [i]
+    
+    # Add connections for transfers between jeep routes
+    travel_graph.add_transfer_connections()
     
     # Generate random start and end points
     # Make sure they're not on the same spot
@@ -66,23 +73,169 @@ def generate_test_case():
     start_point = (start_x, start_y)
     end_point = (end_x, end_y)
     
-    # Find the shortest path
-    cost, path = travel_graph.find_shortest_path(start_point, end_point)
+    # Create passenger and plan route
+    passenger = Passenger(origin=start_point, destination=end_point)
+    passenger.plan_route(travel_graph)
+    
+    path = passenger.route
+    cost = passenger.cost
+    
+    # Analyze the path to understand journey segments
+    journey_segments = analyze_journey(path, travel_graph)
     
     print(f"Generated {num_jeeps} jeep routes")
     print(f"Path found from {start_point} to {end_point}")
     print(f"Total cost: {cost}")
     print(f"Path length: {len(path)} points")
     
-    return jeeps, path, start_point, end_point, all_route_points
+    # Print journey analysis
+    print("\nJourney Analysis:")
+    print_journey_analysis(journey_segments)
+    
+    return jeeps, path, start_point, end_point, all_route_points, journey_segments, travel_graph
+
+def analyze_journey(path, travel_graph):
+    """Analyze the journey to identify segments of walking, riding, boarding, etc."""
+    if not path or len(path) < 2:
+        return []
+    
+    segments = []
+    current_segment = None
+    
+    for i in range(len(path) - 1):
+        curr = path[i]
+        next_node = path[i + 1]
+        
+        # Find the edge between these nodes
+        edge_cost = None
+        edge_type = None
+        
+        for neighbor, cost, edge in travel_graph.graph.get(curr, []):
+            if neighbor == next_node:
+                edge_cost = cost
+                edge_type = edge
+                break
+        
+        if edge_type == "walk":
+            action_type = ACTION_WALK
+        elif edge_type == "transition":
+            action_type = ACTION_BOARD
+            # Extract jeep_id from next node which should be a transition node
+            jeep_id = next_node[2] if len(next_node) == 3 else None
+        elif edge_type == "jeep":
+            action_type = ACTION_RIDE
+            # Extract jeep_id from current node which should be a transition node
+            jeep_id = curr[2] if len(curr) == 3 else None
+        elif edge_type == "alight":
+            action_type = ACTION_ALIGHT
+        elif edge_type == "transfer" or edge_type == "complete_transfer":
+            action_type = ACTION_TRANSFER
+            if edge_type == "transfer" and len(next_node) == 3 and next_node[1] == 'transfer':
+                # Extract transfer info (from_jeep, to_jeep)
+                transfer_info = next_node[2]
+            else:
+                transfer_info = None
+        else:
+            action_type = edge_type  # Default to edge type if not specifically handled
+        
+        # Create segment info
+        segment = {
+            "from_node": curr,
+            "to_node": next_node,
+            "action": action_type,
+            "cost": edge_cost
+        }
+        
+        # Add jeep info if applicable
+        if action_type in [ACTION_BOARD, ACTION_RIDE] and 'jeep_id' in locals():
+            segment["jeep_id"] = jeep_id
+        
+        # Add transfer info if applicable
+        if action_type == ACTION_TRANSFER and 'transfer_info' in locals() and transfer_info:
+            segment["from_jeep"] = transfer_info[0]
+            segment["to_jeep"] = transfer_info[1]
+        
+        segments.append(segment)
+    
+    return segments
+
+def print_journey_analysis(journey_segments):
+    """Print a human-readable analysis of the journey"""
+    if not journey_segments:
+        print("No journey to analyze")
+        return
+    
+    total_cost = sum(segment["cost"] for segment in journey_segments)
+    
+    # Count different actions
+    walk_segments = sum(1 for segment in journey_segments if segment["action"] == ACTION_WALK)
+    boardings = sum(1 for segment in journey_segments if segment["action"] == ACTION_BOARD)
+    rides = sum(1 for segment in journey_segments if segment["action"] == ACTION_RIDE)
+    alightings = sum(1 for segment in journey_segments if segment["action"] == ACTION_ALIGHT)
+    transfers = sum(1 for segment in journey_segments if segment["action"] == ACTION_TRANSFER)
+    
+    print(f"Total journey cost: {total_cost}")
+    print(f"Walking segments: {walk_segments}")
+    print(f"Jeepney boardings: {boardings}")
+    print(f"Jeepney rides: {rides}")
+    print(f"Alightings: {alightings}")
+    print(f"Transfers between jeepneys: {transfers}")
+    
+    # Detailed journey steps
+    print("\nDetailed Journey Steps:")
+    current_mode = None
+    current_jeep = None
+    step_num = 1
+    
+    for i, segment in enumerate(journey_segments):
+        action = segment["action"]
+        
+        if action == ACTION_WALK:
+            if current_mode != ACTION_WALK:
+                print(f"{step_num}. Started walking from {segment['from_node']}")
+                step_num += 1
+                current_mode = ACTION_WALK
+        
+        elif action == ACTION_BOARD:
+            jeep_id = segment.get("jeep_id", "unknown")
+            print(f"{step_num}. Boarded jeepney {jeep_id} at {segment['from_node']}")
+            step_num += 1
+            current_mode = ACTION_RIDE
+            current_jeep = jeep_id
+        
+        elif action == ACTION_RIDE:
+            # We don't need to print every ride segment, just the first one after boarding
+            pass
+        
+        elif action == ACTION_ALIGHT:
+            print(f"{step_num}. Alighted from jeepney {current_jeep} at {segment['to_node']}")
+            step_num += 1
+            current_mode = None
+            current_jeep = None
+        
+        elif action == ACTION_TRANSFER:
+            if "from_jeep" in segment and "to_jeep" in segment:
+                print(f"{step_num}. Transferred from jeepney {segment['from_jeep']} to jeepney {segment['to_jeep']} at {segment['from_node'][0]}")
+            else:
+                print(f"{step_num}. Made a transfer at {segment['from_node']}")
+            step_num += 1
+    
+    # Print final arrival
+    if journey_segments:
+        final_destination = journey_segments[-1]["to_node"]
+        if isinstance(final_destination, tuple) and len(final_destination) == 2:
+            print(f"{step_num}. Arrived at destination {final_destination}")
 
 def main():
     # Generate initial test case
-    jeeps, path, start_point, end_point, all_route_points = generate_test_case()
+    jeeps, path, start_point, end_point, all_route_points, journey_segments, travel_graph = generate_test_case()
     
     # Instructions text
     font = pygame.font.SysFont('Arial', 24)
-    instructions = font.render('Press SPACE to generate a new test case, ESC to quit', True, (0, 0, 0))
+    instructions = font.render('SPACE to generate new test case', True, (0, 0, 0))
+    
+    show_info = False
+    info_panel = None
     
     # Main game loop
     running = True
@@ -94,9 +247,13 @@ def main():
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:  # Press SPACE to regenerate
-                    jeeps, path, start_point, end_point, all_route_points = generate_test_case()
+                    jeeps, path, start_point, end_point, all_route_points, journey_segments, travel_graph = generate_test_case()
+                    show_info = False
+                elif event.key == pygame.K_i:  # Press I to toggle journey info
+                    show_info = not show_info
         
         # Draw everything
+        screen.fill((255, 255, 255))  # Clear with white background
         grid.draw_grid(screen)
         
         # Draw instructions
@@ -110,12 +267,16 @@ def main():
         for jeep in jeeps:
             draw_route_arrows(screen, jeep)
         
-        # Draw path with different colors for walking and riding (on top of jeep routes)
-        draw_path(screen, path, all_route_points, jeeps)
+        # Draw path with different colors for walking, boarding, riding, alighting
+        draw_enhanced_path(screen, path, all_route_points, jeeps, journey_segments)
         
         # Draw start and end points (always on top)
         draw_point(screen, start_point, (0, 255, 0), 10)  # Green for start
         draw_point(screen, end_point, (255, 0, 255), 10)  # Magenta for end
+        
+        # Draw journey info panel if toggled on
+        if show_info:
+            draw_journey_info(screen, journey_segments, jeeps)
         
         # Update display
         pygame.display.flip()
@@ -163,92 +324,180 @@ def draw_route_arrows(screen, jeep):
             (mx + dy/2 - dx/2, my - dx/2 - dy/2)
         ])
 
-def draw_path(screen, path, all_route_points, jeeps):
-    if not path or len(path) < 2:
+def draw_enhanced_path(screen, path, all_route_points, jeeps, journey_segments):
+    if not path or len(path) < 2 or not journey_segments:
         return
     
-    # Convert grid coordinates to screen coordinates
-    screen_points = [grid.get_grid_coors(x, y) for x, y in path]
-    
-    # Draw segments of the path with different colors based on transport mode
-    for i in range(len(path) - 1):
-        start_point = path[i]
-        end_point = path[i + 1]
+    # Draw segments of the path with different colors based on action type
+    for i, segment in enumerate(journey_segments):
+        from_node = segment["from_node"]
+        to_node = segment["to_node"]
+        action = segment["action"]
         
+        # Skip nodes that aren't grid coordinates
+        if not isinstance(from_node, tuple) or not isinstance(to_node, tuple):
+            continue
+        
+        # Skip transition and transfer nodes for visualization purposes
+        if isinstance(from_node, tuple) and len(from_node) > 2:
+            from_node = from_node[0]  # Get the grid coordinate
+        if isinstance(to_node, tuple) and len(to_node) > 2:
+            to_node = to_node[0]  # Get the grid coordinate
+            
         # Get screen coordinates
-        start_screen = screen_points[i]
-        end_screen = screen_points[i + 1]
+        from_screen = grid.get_grid_coors(*from_node) if isinstance(from_node, tuple) and len(from_node) == 2 else None
+        to_screen = grid.get_grid_coors(*to_node) if isinstance(to_node, tuple) and len(to_node) == 2 else None
         
-        # Determine if this segment is walking or riding
-        # We're riding if both points are on the same jeep route
-        is_riding = False
-        riding_jeep_idx = None
-        
-        # Check if both points are on jeep routes
-        if start_point in all_route_points and end_point in all_route_points:
-            # Find common jeep routes
-            start_jeeps = set(all_route_points[start_point])
-            end_jeeps = set(all_route_points[end_point])
-            common_jeeps = start_jeeps.intersection(end_jeeps)
+        if not from_screen or not to_screen:
+            continue
             
-            if common_jeeps:
-                # Check if they're adjacent on the same jeep route
-                jeep_idx = next(iter(common_jeeps))
-                route_points = jeeps[jeep_idx].route_points
-                
-                # Find indices of start and end in route_points
-                try:
-                    s_idx = route_points.index(start_point)
-                    e_idx = route_points.index(end_point)
-                    
-                    # Check if they're adjacent or wrap around
-                    if e_idx == (s_idx + 1) % len(route_points) or s_idx == (e_idx + 1) % len(route_points):
-                        is_riding = True
-                        riding_jeep_idx = jeep_idx
-                except ValueError:
-                    pass  # Not found in route_points
-        
-        # Draw the line segment with appropriate color
-        if is_riding:
-            color = jeeps[riding_jeep_idx].color
-            # Draw a much thicker line for riding to make it more visible
-            line_width = 8
-            # Draw a slightly transparent background line to help it stand out
-            pygame.draw.line(screen, (255, 255, 255), start_screen, end_screen, line_width + 4)
-            # Draw the colored line on top
-            pygame.draw.line(screen, color, start_screen, end_screen, line_width)
-            
-            # Draw a small circle to indicate jeep stop
-            pygame.draw.circle(screen, (255, 255, 255), start_screen, 9)  # White outline
-            pygame.draw.circle(screen, color, start_screen, 7)
-            # For the last point in the path
-            if i == len(path) - 2:
-                pygame.draw.circle(screen, (255, 255, 255), end_screen, 9)  # White outline
-                pygame.draw.circle(screen, color, end_screen, 7)
-        else:
-            # Walking segment - dashed line
+        # Set color and line style based on action type
+        if action == ACTION_WALK:
+            color = WALKING_COLOR
             line_width = 3
-            # Draw a white background for better visibility
-            draw_dashed_line(screen, (255, 255, 255), start_screen, end_screen, line_width + 2)
-            # Draw the actual dashed line
-            draw_dashed_line(screen, WALKING_COLOR, start_screen, end_screen, line_width)
-    
-    # Draw way points (nodes along the path that aren't start/end points)
-    for i in range(1, len(screen_points) - 1):
-        point = path[i]
-        screen_point = screen_points[i]
+            # Draw dashed line for walking
+            draw_dashed_line(screen, (255, 255, 255), from_screen, to_screen, line_width + 2)
+            draw_dashed_line(screen, color, from_screen, to_screen, line_width)
         
-        # Different circle for points on jeep routes
-        if point in all_route_points:
-            # Find which jeep(s) this point belongs to
-            jeep_indices = all_route_points[point]
-            if jeep_indices:
-                # Use the color of the first jeep it belongs to
-                color = jeeps[jeep_indices[0]].color
-                pygame.draw.circle(screen, color, screen_point, 6)
-        else:
-            # Regular waypoint (walking)
-            pygame.draw.circle(screen, WALKING_COLOR, screen_point, 4)
+        elif action == ACTION_RIDE and "jeep_id" in segment:
+            jeep_id = segment["jeep_id"]
+            color = jeeps[jeep_id].color if jeep_id < len(jeeps) else (0, 0, 0)
+            line_width = 8
+            # Draw a thick line for riding
+            pygame.draw.line(screen, (255, 255, 255), from_screen, to_screen, line_width + 4)
+            pygame.draw.line(screen, color, from_screen, to_screen, line_width)
+        
+        elif action == ACTION_BOARD:
+            # Draw boarding indicator
+            pygame.draw.circle(screen, BOARDING_COLOR, from_screen, 12)
+            pygame.draw.circle(screen, (255, 255, 255), from_screen, 10)
+            pygame.draw.circle(screen, BOARDING_COLOR, from_screen, 8)
+            
+            # Draw small text indicating "BOARD"
+            font = pygame.font.SysFont('Arial', 12)
+            text = font.render('B', True, (0, 0, 0))
+            text_rect = text.get_rect(center=from_screen)
+            screen.blit(text, text_rect)
+        
+        elif action == ACTION_ALIGHT:
+            # Draw alighting indicator
+            pygame.draw.circle(screen, ALIGHTING_COLOR, to_screen, 12)
+            pygame.draw.circle(screen, (255, 255, 255), to_screen, 10)
+            pygame.draw.circle(screen, ALIGHTING_COLOR, to_screen, 8)
+            
+            # Draw small text indicating "ALIGHT"
+            font = pygame.font.SysFont('Arial', 12)
+            text = font.render('A', True, (0, 0, 0))
+            text_rect = text.get_rect(center=to_screen)
+            screen.blit(text, text_rect)
+        
+        elif action == ACTION_TRANSFER:
+            # Get the actual grid point for the transfer
+            if isinstance(from_node, tuple) and len(from_node) > 2:
+                transfer_point = from_node[0]
+            else:
+                transfer_point = from_node
+                
+            transfer_screen = grid.get_grid_coors(*transfer_point) if isinstance(transfer_point, tuple) and len(transfer_point) == 2 else None
+            
+            if transfer_screen:
+                # Draw transfer indicator
+                pygame.draw.circle(screen, TRANSFER_COLOR, transfer_screen, 14)
+                pygame.draw.circle(screen, (255, 255, 255), transfer_screen, 12)
+                pygame.draw.circle(screen, TRANSFER_COLOR, transfer_screen, 10)
+                
+                # Draw small text indicating "TRANSFER"
+                font = pygame.font.SysFont('Arial', 12)
+                text = font.render('T', True, (0, 0, 0))
+                text_rect = text.get_rect(center=transfer_screen)
+                screen.blit(text, text_rect)
+
+def draw_journey_info(screen, journey_segments, jeeps):
+    """Draw an information panel showing journey details"""
+    if not journey_segments:
+        return
+    
+    # Panel size and position
+    panel_width = 300
+    panel_height = 400
+    panel_x = grid.SCREEN_WIDTH - panel_width - 20
+    panel_y = 70
+    
+    # Draw panel background
+    pygame.draw.rect(screen, (240, 240, 240), (panel_x, panel_y, panel_width, panel_height))
+    pygame.draw.rect(screen, (0, 0, 0), (panel_x, panel_y, panel_width, panel_height), 2)
+    
+    # Panel title
+    font_title = pygame.font.SysFont('Arial', 20, bold=True)
+    font_normal = pygame.font.SysFont('Arial', 16)
+    
+    title = font_title.render("Journey Analysis", True, (0, 0, 0))
+    screen.blit(title, (panel_x + 10, panel_y + 10))
+    
+    # Journey statistics
+    total_cost = sum(segment["cost"] for segment in journey_segments)
+    walk_segments = sum(1 for segment in journey_segments if segment["action"] == ACTION_WALK)
+    boardings = sum(1 for segment in journey_segments if segment["action"] == ACTION_BOARD)
+    alightings = sum(1 for segment in journey_segments if segment["action"] == ACTION_ALIGHT)
+    transfers = sum(1 for segment in journey_segments if segment["action"] == ACTION_TRANSFER)
+    
+    y_offset = panel_y + 50
+    line_height = 25
+    
+    stats = [
+        f"Total cost: {total_cost}",
+        f"Walking segments: {walk_segments}",
+        f"Jeepney boardings: {boardings}",
+        f"Alightings: {alightings}",
+        f"Transfers: {transfers}"
+    ]
+    
+    for stat in stats:
+        text = font_normal.render(stat, True, (0, 0, 0))
+        screen.blit(text, (panel_x + 15, y_offset))
+        y_offset += line_height
+    
+    # Journey steps
+    y_offset += 20
+    steps_title = font_title.render("Key Journey Steps:", True, (0, 0, 0))
+    screen.blit(steps_title, (panel_x + 10, y_offset))
+    y_offset += 30
+    
+    # Collect key journey events (boarding, transfer, alighting)
+    key_events = []
+    
+    for i, segment in enumerate(journey_segments):
+        action = segment["action"]
+        
+        if action == ACTION_BOARD:
+            jeep_id = segment.get("jeep_id", "unknown")
+            key_events.append(("Board", f"Jeepney {jeep_id}", jeeps[jeep_id].color if jeep_id < len(jeeps) else (0, 0, 0)))
+        
+        elif action == ACTION_TRANSFER:
+            if "from_jeep" in segment and "to_jeep" in segment:
+                from_jeep = segment["from_jeep"]
+                to_jeep = segment["to_jeep"]
+                key_events.append(("Transfer", f"Jeep {from_jeep} → {to_jeep}", TRANSFER_COLOR))
+        
+        elif action == ACTION_ALIGHT:
+            key_events.append(("Alight", "", ALIGHTING_COLOR))
+    
+    # Display key events
+    for i, (event_type, details, color) in enumerate(key_events):
+        if y_offset > panel_y + panel_height - 30:
+            # Don't go beyond panel
+            more_text = font_normal.render("... more steps not shown", True, (100, 100, 100))
+            screen.blit(more_text, (panel_x + 15, y_offset))
+            break
+            
+        # Draw colored circle
+        pygame.draw.circle(screen, color, (panel_x + 25, y_offset + 8), 8)
+        
+        # Draw event text
+        event_text = font_normal.render(f"{event_type}: {details}", True, (0, 0, 0))
+        screen.blit(event_text, (panel_x + 40, y_offset))
+        
+        y_offset += line_height
 
 def draw_dashed_line(screen, color, start_pos, end_pos, width=1, dash_length=10):
     dx = end_pos[0] - start_pos[0]
