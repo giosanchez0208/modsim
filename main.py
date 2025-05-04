@@ -1,263 +1,265 @@
 import pygame
 import sys
-import random
-import grid
-from passenger import Passenger, TravelGraph
+import math
+from grid import SCREEN_WIDTH, SCREEN_HEIGHT, draw_grid, get_grid_coors
 from jeeproute import JeepRoute
-from areas import AreaManager
+from passenger import Passenger, TravelGraph
+from areas import AreaManager, draw_waiting_pin
 
-# INITIALIZATIONS ===================================
 pygame.init()
 
-# CONSTANTS =========================================
-# For the simulation
-SCREEN_WIDTH = 1600
-SCREEN_HEIGHT = 900
+# Constants
 FPS = 120
-
-# For passenger generation
 MAX_PASSENGERS = 10000
-BASE_SPAWN_RATE = 300  # Passengers per simulation minute at 1x speed
-time_since_last_spawn = 0
-active_passengers = []
+BASE_SPAWN_RATE = 200
+SPEED_MULTIPLIERS = [0, 0.05, 1.0, 5.0, 25.0, 50.0, 100.0]
+PIN_TEXT_COLOR = (255, 255, 255)  # White text for pin numbers
+COLORS = {
+    'ROYAL_BLUE': (110, 115, 209),
+    'RED': (252, 35, 20),
+    'GREEN': (31, 149, 61),
+    'PINK': (248, 167, 200),
+    'YELLOW': (248, 193, 38),
+    'GRAY': (163, 163, 163)
+}
 
-# COLORS (from the screenshot) ======================
-ROYAL_BLUE = (110, 115, 209)  
-RED = (252, 35, 20)           
-GREEN = (31, 149, 61)         
-PINK = (248, 167, 200)       
-YELLOW = (248, 193, 38)       
-GRAY = (163, 163, 163)
-
-# FONTS
-futuralt_font = pygame.font.Font('FUTURALT.TTF', 24)
-
-# Speed settings
-SPEED_MULTIPLIERS = [1.0, 25.0, 50.0]
-current_speed_index = 0
-speed_multiplier = SPEED_MULTIPLIERS[current_speed_index]
-
-# Commute time tracking
-total_commute_time = 0
-completed_journeys = 0
-
-# Initialize last_stats_values to an empty dictionary
-last_stats_values = {}
-stats_surfaces = []
-
-# CREATE SCREEN =====================================
+# Initialize core objects
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+clock = pygame.time.Clock()
 pygame.display.set_caption("Jeepney Simulation")
-clock = pygame.time.Clock() 
 
-# Generate jeep routes w different colors
-routes = [
-    JeepRoute(color=ROYAL_BLUE),
-    JeepRoute(color=RED),
-    JeepRoute(color=GREEN),
-    JeepRoute(color=PINK),
-    JeepRoute(color=YELLOW),
-    JeepRoute(color=GRAY),
-]
+# Fonts
+futuralt = pygame.font.Font('FUTURALT.TTF', 24)
+small_font = pygame.font.Font('FUTURALT.TTF', 18)
 
-# Generate Travel Graph
+# Simulation state
+sim_state = {
+    'speed_index': 2,
+    'active_passengers': [],
+    'waiting_passengers': {},  # Will now store {position: {jeep_id: count}}
+    'grid_cache': {},
+    'metrics': {
+        'total_commute': 0.0,
+        'total_wait': 0.0,
+        'total_fitness': 0.0,
+        'completed': 0
+    }
+}
+
+# Initialize routes and travel graph
+routes = [JeepRoute(color=color) for color in COLORS.values()]
 travel_graph = TravelGraph()
 for i, route in enumerate(routes):
     travel_graph.addJeep(route, jeep_id=i)
 travel_graph.add_transfer_connections()
 
-# Initialize the Area Manager
+# Initialize areas
 area_manager = AreaManager(grid_size=17)
+residential = [(2, 2), (3, 5), (4, 3), (5, 7), (6, 4),
+               (0, 0), (0, 16), (16, 0), (16, 16), (0, 8), (8, 0)]
+non_residential = [(10, 10), (12, 8), (13, 14), (15, 11), (11, 13),
+                   (16, 8), (8, 16), (0, 12), (12, 0), (16, 4), (4, 16)]
 
-# Define residential and non-residential areas
-# Residential areas - could be customized or randomized
-residential_positions = [
-    (2, 3), (5, 8), (8, 2), (12, 6), (15, 14)
-]
+area_manager.define_areas(residential, non_residential)
 
-# Non-residential areas - could be customized or randomized
-non_residential_positions = [
-    (4, 15), (7, 10), (9, 6), (11, 13), (14, 4)
-]
-
-# Set up the areas
-area_manager.define_areas(residential_positions, non_residential_positions)
-
-# Dictionary to track waiting passengers at each node (grid coordinates)
-waiting_passengers = {}
-
-# Helper function to format time
 def format_time(seconds):
-    minutes = int(seconds / 60)
-    seconds = int(seconds % 60)
-    return f"{minutes}m {seconds}s"
+    return f"{int(seconds/60)}m {int(seconds%60)}s"
 
-# Pre-calculate grid coordinates for performance
-grid_coordinates_cache = {}
+def handle_speed_change(key):
+    if key == pygame.K_RIGHT:
+        sim_state['speed_index'] = min(len(SPEED_MULTIPLIERS)-1,
+                                       sim_state['speed_index']+1)
+    elif key == pygame.K_LEFT:
+        sim_state['speed_index'] = max(0, sim_state['speed_index']-1)
 
-# Main loop
-running = True
-last_time = pygame.time.get_ticks()
-spawn_counter = 0.0  # Track fractional spawns
+    sim_state['target_speed'] = SPEED_MULTIPLIERS[sim_state['speed_index']]
 
-while running:
-    current_time = pygame.time.get_ticks()
-    dt = (current_time - last_time) / 1000.0 * speed_multiplier
-    raw_dt = (current_time - last_time) / 1000.0
-    last_time = current_time
-    
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        elif event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_1:
-                current_speed_index = 0
-                speed_multiplier = SPEED_MULTIPLIERS[current_speed_index]
-            elif event.key == pygame.K_2:
-                current_speed_index = 1
-                speed_multiplier = SPEED_MULTIPLIERS[current_speed_index]
-            elif event.key == pygame.K_3:
-                current_speed_index = 2
-                speed_multiplier = SPEED_MULTIPLIERS[current_speed_index]
-            elif event.key == pygame.K_r:
-                # Randomize areas when R is pressed
-                area_manager.generate_random_areas(num_residential=5, num_non_residential=5)
-                # Reset waiting passengers dictionary
-                waiting_passengers = {}
-                for area in area_manager.all_areas:
-                    waiting_passengers[area] = 0
+def spawn_passengers(dt):
+    spawn_rate = BASE_SPAWN_RATE / 60 * dt
+    spawn_count = int(spawn_rate + sim_state.get('spawn_remainder', 0))
+    sim_state['spawn_remainder'] = spawn_rate + sim_state.get('spawn_remainder', 0) - spawn_count
 
-    # Passenger spawning based on dt and speed
-    # Calculate expected number of spawns this frame
-    spawn_rate_per_second = BASE_SPAWN_RATE / 60.0  # Convert from per minute to per second
-    expected_spawns = spawn_rate_per_second * dt  # Scale by dt which already includes speed multiplier
-    
-    # Add to counter
-    spawn_counter += expected_spawns
-    
-    # Spawn whole passengers
-    while spawn_counter >= 1.0 and len(active_passengers) < MAX_PASSENGERS:
-        spawn_counter -= 1.0
-        if random.random() < 0.7:  # 70% chance to spawn
-            # Get random origin and destination from areas
-            origin, destination = area_manager.get_random_origin_destination_pair()
+    for _ in range(spawn_count):
+        if len(sim_state['active_passengers']) >= MAX_PASSENGERS:
+            break
+        
+        orig, dest = area_manager.get_random_origin_destination_pair()
+        if not orig or not dest:
+            continue
             
-            if origin and destination:
-                new_passenger = Passenger()
-                new_passenger.set_trip_between_areas(origin, destination)
-                new_passenger.plan_route(travel_graph)
-                
-                if new_passenger.route:
-                    new_passenger.state = "walking"
-                    # Use cached grid coordinates if available
-                    start_point = new_passenger.route[0]
-                    if start_point in grid_coordinates_cache:
-                        new_passenger.position = grid_coordinates_cache[start_point]
-                    else:
-                        new_passenger.position = grid.get_grid_coors(*start_point)
-                        grid_coordinates_cache[start_point] = new_passenger.position
-                    new_passenger.journey_time = 0
-                    active_passengers.append(new_passenger)
+        p = Passenger()
+        p.journey_time = 0.0  # Initialize journey_time to avoid AttributeError
+        p.set_trip_between_areas(orig, dest)
+        p.plan_route(travel_graph)
+        
+        if p.route:
+            start = p.route[0]
+            if start not in sim_state['grid_cache']:
+                sim_state['grid_cache'][start] = get_grid_coors(*start)
+            p.position = sim_state['grid_cache'][start]
+            sim_state['active_passengers'].append(p)
 
-    # Draw the grid
-    grid.draw_grid(screen)
+def update_passengers(dt):
+    # Reset the waiting data structure for this cycle
+    waiting = {}
+    completed = []
     
-    # Draw the areas
-    area_manager.draw(screen)
-
-    # Update all jeeps
-    for route in routes:
-        route.update(dt)
-        route.drawRoute(screen)
-    for route in routes:
-        route.update(dt)
-        route.drawJeep(screen)
-        
-    # Reset waiting passenger counts each frame
-    waiting_passengers = {}
-    
-    # Update and draw passengers - removing passengers that arrive
-    for i in range(len(active_passengers)-1, -1, -1):  # Iterate backwards for safe removal
-        p = active_passengers[i]
-        
-        # Track waiting passengers at transition nodes
-        if p.state == "waiting_jeep" and p.current_step < len(p.route):
-            # Get the current transition node where passenger is waiting
-            current_node = p.route[p.current_step]
-            
-            # For transition nodes, we need the base grid coordinates
-            if isinstance(current_node, tuple) and len(current_node) == 3 and current_node[1] == 'transition':
-                node_pos = current_node[0]  # Extract the grid coordinates
-                
-                # Increment the count for this location
-                if node_pos in waiting_passengers:
-                    waiting_passengers[node_pos] += 1
-                else:
-                    waiting_passengers[node_pos] = 1
-        
+    for p in sim_state['active_passengers']:
         if p.state == "arrived":
-            # Update statistics for arrived passengers immediately
-            total_commute_time += p.journey_time
-            completed_journeys += 1
-            # Remove from list
-            active_passengers.pop(i)
-        else:
-            # Only update and draw passengers still in transit
-            p.update_position(travel_graph, dt, routes)
+            completed.append(p)
+            sim_state['metrics']['total_commute'] += p.journey_time
+            sim_state['metrics']['total_fitness'] += 100 * math.exp(-p.journey_time/60)
+            continue
+            
+        p.update_position(travel_graph, dt, routes)
+        p.journey_time += dt
+        
+        # Only count passengers who are actively waiting for a jeep
+        if p.state == "waiting_jeep":
+            # Get the current grid position
+            current_node = p.route[p.current_step]
+            grid_pos = current_node[0] if isinstance(current_node, tuple) and len(current_node) == 3 else current_node
+            
+            # Determine which jeep the passenger is waiting for
+            jeep_id = -1  # Default value
+            # If we're at a route node with destination info, extract the jeep_id
+            current_node = p.route[p.current_step]
+            if isinstance(current_node, tuple) and len(current_node) == 3:
+                jeep_id = current_node[2]  # The jeep_id should be the third element in the tuple
+            
+            # Initialize the dict for this grid position if it doesn't exist
+            if grid_pos not in waiting:
+                waiting[grid_pos] = {}
+            
+            # Increment the count for this jeep at this position
+            waiting[grid_pos][jeep_id] = waiting[grid_pos].get(jeep_id, 0) + 1
+
+    # Clean up completed passengers
+    sim_state['active_passengers'] = [p for p in sim_state['active_passengers'] if p not in completed]
+    sim_state['metrics']['completed'] += len(completed)
+    
+    # Update waiting passengers
+    sim_state['waiting_passengers'] = waiting
+    
+    # Update total wait time
+    total_waiting = sum(sum(counts.values()) for counts in waiting.values())
+    sim_state['metrics']['total_wait'] += total_waiting * dt
+
+def draw_waiting_pins(screen, font):
+    """Draw pins showing waiting passengers, colored by the jeep they're waiting for."""
+    PIN_SPACING = 15  # Space between multiple pins at the same location
+    
+    for pos, jeep_counts in sim_state['waiting_passengers'].items():
+        if pos not in sim_state['grid_cache']:
+            sim_state['grid_cache'][pos] = get_grid_coors(*pos)
+        
+        screen_pos = sim_state['grid_cache'][pos]
+        
+        # Calculate total pins to place at this position
+        total_pins = len(jeep_counts)
+        if total_pins == 0:
+            continue
+            
+        # Calculate the starting x-offset for multiple pins
+        start_offset = -((total_pins - 1) * PIN_SPACING) / 2
+        
+        # Draw pins for each jeep type
+        for i, (jeep_id, count) in enumerate(jeep_counts.items()):
+            if count <= 0:
+                continue
+                
+            # Calculate the x-offset for this pin
+            offset_x = start_offset + (i * PIN_SPACING)
+            
+            # Get the pin color based on the jeep route
+            pin_color = COLORS['GRAY']  # Default gray
+            if jeep_id >= 0 and jeep_id < len(routes):
+                pin_color = routes[jeep_id].color
+            
+            # Adjust position to account for multiple pins
+            pin_pos = (screen_pos[0] + offset_x, screen_pos[1])
+            
+            # Draw the pin with the appropriate color
+            draw_waiting_pin(screen, pin_pos, count, font, pin_color)
+
+def draw_interface():
+    # Stats
+    stats = [
+        f"Average Wait: {format_time(sim_state['metrics']['total_wait']/(sim_state['metrics']['completed'] or 1))}",
+        f"Completed: {sim_state['metrics']['completed']}",
+        f"Active: {len(sim_state['active_passengers'])}",
+        f"Waiting: {sum(sum(counts.values()) for counts in sim_state['waiting_passengers'].values())}",
+        f"Fitness: {sim_state['metrics']['total_fitness']/(sim_state['metrics']['completed'] or 1):.1f}"
+    ]
+    
+    y = 20
+    for text in stats:
+        surf = futuralt.render(text, True, (0,0,0))
+        screen.blit(surf, (20, y))
+        y += 30
+    
+    # Speed display
+    speed_text = f"{sim_state['current_speed']:.2f}× Speed"
+    surf = small_font.render(speed_text, True, (0,0,0))
+    screen.blit(surf, (SCREEN_WIDTH//2 - surf.get_width()//2, 20))
+    
+def main_loop():
+    last_time = pygame.time.get_ticks()
+    # Initialize current_speed and target_speed if not present
+    if 'current_speed' not in sim_state:
+        sim_state['current_speed'] = SPEED_MULTIPLIERS[sim_state['speed_index']]
+    if 'target_speed' not in sim_state:
+        sim_state['target_speed'] = SPEED_MULTIPLIERS[sim_state['speed_index']]
+
+    while True:
+        now = pygame.time.get_ticks()
+        raw_dt = (now - last_time) / 1000.0
+        last_time = now
+
+        # Lerp current_speed toward target_speed over ~0.1s
+        alpha = min(1.0, raw_dt / 0.1)
+        cs = sim_state['current_speed']
+        ts = sim_state['target_speed']
+        sim_state['current_speed'] = cs + (ts - cs) * alpha
+
+        # For Smoothing
+        dt = raw_dt * sim_state['current_speed']
+
+        # Event handling
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.KEYDOWN and event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                handle_speed_change(event.key)
+
+        # Update
+        spawn_passengers(dt)
+        update_passengers(dt)
+
+        # Draw
+        draw_grid(screen)
+        area_manager.draw(screen)
+
+        # Draw all routes
+        for r in routes:
+            r.drawRoute(screen)
+
+        # Draw all passengers
+        for p in sim_state['active_passengers']:
             p.draw(screen)
-            p.journey_time += dt
-    
-    # Update the area manager with current waiting counts
-    for pos, count in waiting_passengers.items():
-        area_manager.update_waiting_count(pos, count)
 
-    # Update statistics display - render only when changed to avoid flashing
-    avg_time = (total_commute_time / completed_journeys) if completed_journeys > 0 else 0
-    current_spawn_rate = BASE_SPAWN_RATE * speed_multiplier / 60
-    
-    # Check if any values have changed
-    current_stats = {
-        "avg_time": int(avg_time),  # Only update when seconds change
-        "completed": completed_journeys,
-        "active": len(active_passengers),
-        "spawn_rate": round(current_spawn_rate, 1),
-        "waiting_total": sum(waiting_passengers.values())
-    }
-    
-    # If values changed or first frame, regenerate text surfaces
-    if current_stats != last_stats_values:
-        last_stats_values = current_stats.copy()
-        stats_surfaces = []
-        
-        stats_text = [
-            f"Average Commute Time: {format_time(avg_time)}",
-            f"Completed Journeys: {completed_journeys}",
-            f"Active Passengers: {len(active_passengers)}",
-            f"Waiting Passengers: {sum(waiting_passengers.values())}",
-            f"Spawn Rate: {current_spawn_rate:.1f} per second",
-            f"Press R to randomize areas"
-        ]
-        
-        for text in stats_text:
-            stats_surfaces.append(futuralt_font.render(text, True, (0, 0, 0)))
-    
-    # Always display the pre-rendered surfaces
-    y_offset = 20
-    for surface in stats_surfaces:
-        screen.blit(surface, (20, y_offset))
-        y_offset += 30
+        # Draw all jeeps
+        for r in routes:
+            r.update(dt)
+            r.drawJeep(screen)
 
-    # Speed indicator - only re-render when speed changes
-    if not hasattr(pygame, 'speed_text_surface') or speed_multiplier != getattr(pygame, 'last_speed_multiplier', None):
-        pygame.speed_text_surface = futuralt_font.render(f'{int(speed_multiplier)}x Speed', True, (0, 0, 0))
-        pygame.last_speed_multiplier = speed_multiplier
-    
-    text_rect = pygame.speed_text_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 40))
-    screen.blit(pygame.speed_text_surface, text_rect.topleft)
+        # Draw all waiting pins
+        draw_waiting_pins(screen, area_manager.font)
 
-    # Update the display
-    pygame.display.flip()
-    clock.tick(FPS)
+        draw_interface()
+        pygame.display.flip()
+        clock.tick(FPS)
 
-pygame.quit()
-sys.exit()
+if __name__ == "__main__":
+    main_loop()

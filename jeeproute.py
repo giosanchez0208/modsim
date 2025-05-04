@@ -6,50 +6,51 @@ import math
 JEEP_SPEED = 150
 class JeepRoute:
     def __init__(self, color=(255, 0, 0), route=None, route_points=None):
-        
         # JEEPNEY ROUTE ============================================================
-        
-        # Store the route color
         self.color = color
-        
-        # Initialize empty lists for route and route_points
         self.route = [] if route is None else route
         self.route_points = [] if route_points is None else route_points
         
-        # Generate a random route if none was provided
         if not self.route:
             self.randomizeRoute()
             
-        # JEEPNEY ===================================================================
-
-        # Orientation
-        self.isMovingAlongX = False
-        self.isInReverse = False
+        # JEEPNEYS =================================================================
+        self.isMovingAlongX = [False, False]
+        self.isInReverse = [False, False]
         
-        # Ensure there are points to work with
         if len(self.route_points) < 2:
             raise ValueError("Route must have at least 2 points")
             
-        # Put jeep on random location
+        # Initialize both jeeps
+        self.jeepLocation = [None, None]
+        self.exact_position = [None, None]
+        self.jeepDestination = [None, None]
+        self.current_route_index = [None, None]
+        
+        # Put first jeep on random location
         startIndex = randint(0, len(self.route_points) - 1)
-        self.jeepLocation = grid.get_grid_coors(*self.route_points[startIndex])
+        self.current_route_index[0] = startIndex
+        self.jeepLocation[0] = grid.get_grid_coors(*self.route_points[startIndex])
+        self.exact_position[0] = list(self.jeepLocation[0])
         
-        # Store the current route point index to track position
-        self.current_route_index = startIndex
+        # Calculate half-way index safely
+        route_length = len(self.route_points)
+        half_way_index = (startIndex + route_length // 2) % route_length
+        self.current_route_index[1] = half_way_index
+        self.jeepLocation[1] = grid.get_grid_coors(*self.route_points[half_way_index])
+        self.exact_position[1] = list(self.jeepLocation[1])
         
-        # Set the initial destination
-        next_index = (startIndex + 1) % len(self.route_points)
-        self.jeepDestination = grid.get_grid_coors(*self.route_points[next_index])
+        # Set initial destinations for both jeeps
+        for i in range(2):
+            next_index = (self.current_route_index[i] + 1) % len(self.route_points)
+            self.jeepDestination[i] = grid.get_grid_coors(*self.route_points[next_index])
         
-        # Movement speed (pixels per second)
         self.speed = JEEP_SPEED
         
-        # Track exact position with floating point values for smoother movement
-        self.exact_position = list(self.jeepLocation)
-        
         # PASSENGER ================================================================
-        self.MAX_CAPACITY = 16  # "Walo-Walo"
-        self.passengerAmt = 0
+        self.MAX_CAPACITY = 16
+        self.passengerAmt = [0, 0]
+
         
     def randomizeRoute(self): 
         self.route = []
@@ -144,90 +145,78 @@ class JeepRoute:
         pygame.draw.polygon(screen, self.color, screen_points, 5)
         
     def drawJeep(self, screen):
-        jeep_x, jeep_y = self.jeepLocation[0], self.jeepLocation[1]
+        for jeep_id in range(2):  # Draw both jeeps
+            jeep_x, jeep_y = self.jeepLocation[jeep_id][0], self.jeepLocation[jeep_id][1]
+            
+            # Scale jeep to 2/3 size: original (68, 20) -> (45, 13)
+            jeep_surface = pygame.Surface((45, 13), pygame.SRCALPHA)
+            jeep_surface.fill(self.color)
+
+            passenger_count = min(self.passengerAmt[jeep_id], 16)
+            
+            for i in range(passenger_count):
+                # Scale passenger square to 2/3 size: original (5, 5) -> (3, 3)
+                square_surface = pygame.Surface((3, 3))
+                square_surface.fill((96, 96, 96))
+                
+                if i < 8:
+                    x_offset = 3 + i * 5  # 2/3 of original offset and spacing
+                    y_offset = 2
+                else:
+                    x_offset = 3 + (i - 8) * 5
+                    y_offset = jeep_surface.get_height() - 5
+
+                jeep_surface.blit(square_surface, (x_offset, y_offset))
+
+            dx = self.jeepDestination[jeep_id][0] - self.exact_position[jeep_id][0]
+            dy = self.jeepDestination[jeep_id][1] - self.exact_position[jeep_id][1]
+
+            if self.isMovingAlongX[jeep_id] and self.isInReverse[jeep_id]:
+                angle = 0
+            if self.isMovingAlongX[jeep_id] and not self.isInReverse[jeep_id]:
+                angle = 180
+            if not self.isMovingAlongX[jeep_id] and not self.isInReverse[jeep_id]:
+                angle = 90
+            if not self.isMovingAlongX[jeep_id] and self.isInReverse[jeep_id]:
+                angle = 270
+
+            rotated_surface = pygame.transform.rotate(jeep_surface, angle)
+            screen.blit(rotated_surface, (jeep_x - rotated_surface.get_width() // 2, 
+                                         jeep_y - rotated_surface.get_height() // 2))
+
+    def getPassengerAmt(self, jeep_id=0):
+        return self.passengerAmt[jeep_id]
         
-        # Create a base surface (assume default horizontal orientation)
-        jeep_surface = pygame.Surface((68, 20))
-        jeep_surface.fill(self.color)
-
-        # Draw self.passengerAmt number of squares
-        passenger_count = min(self.passengerAmt, 16)
-
-        # Create a surface for each passenger and position them
-        for i in range(passenger_count):
-            square_surface = pygame.Surface((5, 5))
-            square_surface.fill((96, 96, 96))  # Color #606060
-
-            if i < 8:
-            # Top row passengers
-                x_offset = 3 + i * 8  # Spaced 8 pixels apart
-                y_offset = 3
-            else:
-                # Bottom row passengers
-                x_offset = 3 + (i - 8) * 8  # Spaced 8 pixels apart
-                y_offset = jeep_surface.get_height() - 8  # 3px from bottom
-
-            jeep_surface.blit(square_surface, (x_offset, y_offset))
-
-        # Calculate direction vector
-        dx = self.jeepDestination[0] - self.exact_position[0]
-        dy = self.jeepDestination[1] - self.exact_position[1]
-
-        # Determine rotation angle (clockwise, based on intended direction)
-        if self.isMovingAlongX and self.isInReverse:
-            angle = 0 # Right
-        if self.isMovingAlongX and not self.isInReverse:
-            angle = 180 # Left
-        if not self.isMovingAlongX and not self.isInReverse:
-            angle = 90 # Down
-        if not self.isMovingAlongX and self.isInReverse:
-            angle = 270 # Up
-
-        # Apply rotation
-        rotated_surface = pygame.transform.rotate(jeep_surface, angle)
-
-        # Draw the rotated jeep centered on its position
-        screen.blit(rotated_surface, (jeep_x - rotated_surface.get_width() // 2, jeep_y - rotated_surface.get_height() // 2))
-
-    def getPassengerAmt(self):
-        return self.passengerAmt
-        
-    def modifyPassenger(self, amt = 1):
-        self.passengerAmt += amt
+    def modifyPassenger(self, amt=1, jeep_id=0):
+        self.passengerAmt[jeep_id] += amt
 
     def update(self, dt):
-        
-        # Calculate direction vector and distance to destination
-        dx = self.jeepDestination[0] - self.exact_position[0]
-        dy = self.jeepDestination[1] - self.exact_position[1]
-        distance = math.sqrt(dx*dx + dy*dy)
-        
-        # If we're at the destination or very close to it
-        if distance < 2:
-            # Update the exact position to match the destination
-            self.exact_position[0] = self.jeepDestination[0]
-            self.exact_position[1] = self.jeepDestination[1]
-            self.jeepLocation = (int(self.exact_position[0]), int(self.exact_position[1]))
+        for jeep_id in range(2):  # Update both jeeps
+            dx = self.jeepDestination[jeep_id][0] - self.exact_position[jeep_id][0]
+            dy = self.jeepDestination[jeep_id][1] - self.exact_position[jeep_id][1]
+            distance = math.sqrt(dx*dx + dy*dy)
             
-            # Update the destination to the next route point
-            self.current_route_index = (self.current_route_index + 1) % len(self.route_points)
-            next_index = (self.current_route_index + 1) % len(self.route_points)
-            self.jeepDestination = grid.get_grid_coors(*self.route_points[next_index])
-            
-        else:
-            # Move only horizontally or vertically
-            if abs(dx) > abs(dy):
-                # Move horizontally
-                move_distance = min(self.speed * dt, abs(dx))
-                self.exact_position[0] += math.copysign(move_distance, dx)
-                self.isMovingAlongX = True
-                self.isInReverse = dx < 0  # Moving right to left
-            else:
-                # Move vertically
-                move_distance = min(self.speed * dt, abs(dy))
-                self.exact_position[1] += math.copysign(move_distance, dy)
-                self.isMovingAlongX = False
-                self.isInReverse = dy < 0  # Moving bottom to top
+            if distance < 2:
+                self.exact_position[jeep_id][0] = self.jeepDestination[jeep_id][0]
+                self.exact_position[jeep_id][1] = self.jeepDestination[jeep_id][1]
+                self.jeepLocation[jeep_id] = (int(self.exact_position[jeep_id][0]), 
+                                             int(self.exact_position[jeep_id][1]))
                 
-            # Update the integer position
-            self.jeepLocation = (int(self.exact_position[0]), int(self.exact_position[1]))
+                self.current_route_index[jeep_id] = (self.current_route_index[jeep_id] + 1) % len(self.route_points)
+                next_index = (self.current_route_index[jeep_id] + 1) % len(self.route_points)
+                self.jeepDestination[jeep_id] = grid.get_grid_coors(*self.route_points[next_index])
+                
+            else:
+                if abs(dx) > abs(dy):
+                    move_distance = min(self.speed * dt, abs(dx))
+                    self.exact_position[jeep_id][0] += math.copysign(move_distance, dx)
+                    self.isMovingAlongX[jeep_id] = True
+                    self.isInReverse[jeep_id] = dx < 0
+                else:
+                    move_distance = min(self.speed * dt, abs(dy))
+                    self.exact_position[jeep_id][1] += math.copysign(move_distance, dy)
+                    self.isMovingAlongX[jeep_id] = False
+                    self.isInReverse[jeep_id] = dy < 0
+                    
+                self.jeepLocation[jeep_id] = (int(self.exact_position[jeep_id][0]), 
+                                             int(self.exact_position[jeep_id][1]))

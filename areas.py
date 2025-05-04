@@ -7,10 +7,39 @@ import math
 pygame.font.init()
 
 # Color Constants
-AREA_COLOR = (206, 195, 188)  # #CEC3BC in RGB
-PIN_COLOR = (51, 51, 51)      # #333333 in RGB
-PIN_TEXT_COLOR = (240, 235, 231)  # #F0EBE7 in RGB
+AREA_COLOR = (206, 195, 188)
+PIN_COLOR = (51, 51, 51)
+PIN_TEXT_COLOR = (240, 235, 231)
 futuraltheavy_font = pygame.font.Font('FUTURALT-HEAVY.TTF', 10)
+
+# Helper function to draw waiting pins at any grid position
+def draw_waiting_pin(screen, screen_position, count, font, color=PIN_COLOR):
+    """Draw a pin showing the number of waiting passengers at any position."""
+    if count <= 0:
+        return
+
+    # Pin position (slightly above the position)
+    pin_x, pin_y = screen_position
+    pin_y -= 30  # Offset above the node
+
+    # Draw the circle part of the pin
+    pygame.draw.circle(screen, color, (pin_x, pin_y), 7)  # 15px diameter
+
+    # Draw the triangle part (pointing downward)
+    triangle_points = [
+        (pin_x - 6, pin_y),   # 1px thinner on each side
+        (pin_x + 6, pin_y),
+        (pin_x, pin_y + 15)
+    ]
+    pygame.draw.polygon(screen, color, triangle_points)
+
+    # Render the waiting count text
+    text_surface = font.render(str(count), True, PIN_TEXT_COLOR)
+    text_rect = text_surface.get_rect(center=(pin_x, pin_y))
+    # Nudge: one down (y+1), twice to the left (x-2)
+    text_rect.centerx -= 0.4
+    text_rect.centery -= 0
+    screen.blit(text_surface, text_rect)
 
 class Area:
     def __init__(self, grid_position):
@@ -25,29 +54,9 @@ class Area:
         """Draw a pin showing the number of waiting passengers."""
         if self.waiting_passengers <= 0:
             return
-
-        # Pin position (slightly above the area)
-        pin_x, pin_y = self.screen_position
-        pin_y -= 30  # Offset above the node
-
-        # Draw the circle part of the pin
-        pygame.draw.circle(screen, PIN_COLOR, (pin_x, pin_y), 7)  # 15px diameter
-
-        # Draw the triangle part (pointing downward)
-        triangle_points = [
-            (pin_x - 6, pin_y),   # 1px thinner on each side
-            (pin_x + 6, pin_y),
-            (pin_x, pin_y + 15)
-        ]
-        pygame.draw.polygon(screen, PIN_COLOR, triangle_points)
-
-        # Render the waiting count text
-        text_surface = font.render(str(self.waiting_passengers), True, PIN_TEXT_COLOR)
-        text_rect = text_surface.get_rect(center=(pin_x, pin_y))
-        # Nudge: one down (y+1), twice to the left (x-2)
-        text_rect.centerx -= 0.4
-        text_rect.centery -= 0
-        screen.blit(text_surface, text_rect)
+        
+        # Use the global helper function
+        draw_waiting_pin(screen, self.screen_position, self.waiting_passengers, font)
 
 class ResidentialArea(Area):
     def __init__(self, grid_position):
@@ -148,4 +157,3 @@ class AreaManager:
     def draw(self, screen):
         for area in self.residential_areas + self.non_residential_areas:
             area.draw(screen)
-            area.draw_waiting_pin(screen, self.font)

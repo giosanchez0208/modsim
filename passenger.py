@@ -210,8 +210,9 @@ class Passenger:
         self.current_step = 0
         self.position = None
         self.current_jeep = None
+        self.current_jeep_id = None
         self.alight_point = None
-        self.speed = WALKING_COST  # Assuming WALKING_COST represents speed
+        self.speed = WALKING_COST + random.randint(-10, 10)
         self.state = "waiting"
         # Track where to alight once on a jeep
         self._alight_step_index = None
@@ -298,18 +299,27 @@ class Passenger:
     def _handle_jeep_boarding(self, current_node, jeep_routes):
         _, _, jeep_id = current_node
         target_jeep = jeep_routes[jeep_id]
+        
+        # Check distance to both jeeps on the route
+        closest_jeep_id = None
+        min_distance = float('inf')
+        
+        for i in range(2):  # Check both jeeps
+            dx = target_jeep.jeepLocation[i][0] - self.position[0]
+            dy = target_jeep.jeepLocation[i][1] - self.position[1]
+            distance = math.sqrt(dx**2 + dy**2)
+            
+            if distance < min_distance:
+                min_distance = distance
+                closest_jeep_id = i
 
-        # Check distance using screen coordinates
-        dx = target_jeep.jeepLocation[0] - self.position[0]
-        dy = target_jeep.jeepLocation[1] - self.position[1]
-        distance = math.sqrt(dx**2 + dy**2)
-
-        # Only board if jeep is close enough AND has capacity
-        if distance < 5:
-            if target_jeep.passengerAmt < target_jeep.MAX_CAPACITY:
+        # Only board if closest jeep is near enough AND has capacity
+        if min_distance < 5:
+            if target_jeep.passengerAmt[closest_jeep_id] < target_jeep.MAX_CAPACITY:
                 self.state = "on_jeep"
                 self.current_jeep = target_jeep
-                self.current_jeep.modifyPassenger(1)
+                self.current_jeep_id = closest_jeep_id  # Store which jeep we're on
+                self.current_jeep.modifyPassenger(1, closest_jeep_id)
 
                 # Find & stash the last 'transition' step for this jeep
                 last_trans_idx = None
@@ -329,23 +339,21 @@ class Passenger:
                     self.alight_point = grid.get_grid_coors(*(
                         alight_grid[0] if len(alight_grid) == 3 else alight_grid
                     ))
-            else:
-                # Stay in waiting_jeep state if jeep is full
-                self.state = "waiting_jeep"
 
     def _handle_jeep_ride(self):
-        # Update position to jeep's current location
-        self.position = self.current_jeep.jeepLocation
+        # Update position to current jeep's location
+        self.position = self.current_jeep.jeepLocation[self.current_jeep_id]
         
-        # Check if reached alight point and we know where that is
-        current_jeep_grid_pos = self.current_jeep.route_points[self.current_jeep.current_route_index]
+        # Check if reached alight point
+        current_jeep_grid_pos = self.current_jeep.route_points[self.current_jeep.current_route_index[self.current_jeep_id]]
         current_jeep_screen_pos = grid.get_grid_coors(*current_jeep_grid_pos)
         
         if self.alight_point is not None and current_jeep_screen_pos == self.alight_point:
-            self.current_jeep.modifyPassenger(-1)
+            self.current_jeep.modifyPassenger(-1, self.current_jeep_id)
             self.current_jeep = None
+            self.current_jeep_id = None  # Reset jeep ID
 
-            # Jump to just after the transition we alighted from (if we stored it)
+            # Jump to just after the transition we alighted from
             if self._alight_step_index is not None:
                 self.current_step = self._alight_step_index + 1
             self.state = "walking"

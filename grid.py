@@ -19,7 +19,7 @@ def draw_grid(screen):
     grid_width = GRID_COLS * CELL_SIZE
     grid_height = GRID_ROWS * CELL_SIZE
     grid_x = (SCREEN_WIDTH - grid_width) // 2 
-    grid_y = (SCREEN_HEIGHT - grid_height) // 2 - 25
+    grid_y = (SCREEN_HEIGHT - grid_height) // 2 + 20
 
     # Fill the background
     screen.fill(BACKGROUND_COLOR)
@@ -42,7 +42,7 @@ def get_grid_coors(x, y):
     grid_width = GRID_COLS * CELL_SIZE
     grid_height = GRID_ROWS * CELL_SIZE
     grid_x = (SCREEN_WIDTH - grid_width) // 2
-    grid_y = (SCREEN_HEIGHT - grid_height) // 2 - 25
+    grid_y = (SCREEN_HEIGHT - grid_height) // 2 + 20
 
     return (
         grid_x + x * CELL_SIZE,
