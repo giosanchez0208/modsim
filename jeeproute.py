@@ -49,20 +49,20 @@ class JeepRoute:
         startIndex = randint(0, len(self.route_points) - 1)
         self.current_route_index[0] = startIndex
         self.jeepLocation[0] = grid.get_grid_coors(*self.route_points[startIndex])
-        self.exact_position[0] = list(self.jeepLocation[0])
-        
+        self.exact_position[0] = [float(self.jeepLocation[0][0]), float(self.jeepLocation[0][1])]
+
         # Place second jeep at halfway point on route
         route_length = len(self.route_points)
         half_way_index = (startIndex + route_length // 2) % route_length
         self.current_route_index[1] = half_way_index
         self.jeepLocation[1] = grid.get_grid_coors(*self.route_points[half_way_index])
-        self.exact_position[1] = list(self.jeepLocation[1])
-        
+        self.exact_position[1] = [float(self.jeepLocation[1][0]), float(self.jeepLocation[1][1])]
+
         # Set initial destinations for both jeeps
         for i in range(2):
             next_index = (self.current_route_index[i] + 1) % len(self.route_points)
             self.jeepDestination[i] = grid.get_grid_coors(*self.route_points[next_index])
-        
+            
     def randomizeRoute(self): 
         """Generate a random route for jeepneys to follow"""
         self.route = []
@@ -266,9 +266,23 @@ class JeepRoute:
             self._update_jeep_position(jeep_id, dt)
     
     def _update_jeep_speed(self, jeep_id, dt):
-        """Maintain a consistent jeep speed"""
-        self.current_speed[jeep_id] = JEEP_SPEED
+        """Update jeep speed based on passenger count"""
+        current_passenger_count = self.passengerAmt[jeep_id]
         
+        # Apply slowdown based on passenger count
+        if current_passenger_count > 0:
+            slowdown = 1.0 - min(current_passenger_count / self.MAX_CAPACITY, 0.7) * SLOWDOWN_FACTOR
+            target_speed = JEEP_SPEED * slowdown
+        else:
+            target_speed = JEEP_SPEED
+            
+        # Smooth speed transitions
+        speed_diff = target_speed - self.current_speed[jeep_id]
+        self.current_speed[jeep_id] += speed_diff * SPEED_RECOVERY_RATE * dt
+        
+        # Store passenger count for next update
+        self.last_passenger_count[jeep_id] = current_passenger_count
+            
     def _update_jeep_position(self, jeep_id, dt):
         """Update jeep position based on current destination"""
         dx = self.jeepDestination[jeep_id][0] - self.exact_position[jeep_id][0]
@@ -280,19 +294,25 @@ class JeepRoute:
             self._set_new_destination(jeep_id)
         else:
             self._move_jeep(jeep_id, dx, dy, dt)
-    
+            
+        # Update grid-aligned location
+        self.jeepLocation[jeep_id] = (int(self.exact_position[jeep_id][0]),
+                                    int(self.exact_position[jeep_id][1]))
+        
     def _set_new_destination(self, jeep_id):
         """Set jeep to current destination and determine next destination"""
         # Snap to exact destination position
         self.exact_position[jeep_id][0] = self.jeepDestination[jeep_id][0]
         self.exact_position[jeep_id][1] = self.jeepDestination[jeep_id][1]
         self.jeepLocation[jeep_id] = (int(self.exact_position[jeep_id][0]),
-                                      int(self.exact_position[jeep_id][1]))
+                                    int(self.exact_position[jeep_id][1]))
 
         # Move to next point in route
         self.current_route_index[jeep_id] = (self.current_route_index[jeep_id] + 1) % len(self.route_points)
-        next_index = (self.current_route_index[jeep_id] + 1) % len(self.route_points)
-        self.jeepDestination[jeep_id] = grid.get_grid_coors(*self.route_points[next_index])
+        
+        # Get coordinates for the next destination
+        next_point = self.route_points[self.current_route_index[jeep_id]]
+        self.jeepDestination[jeep_id] = grid.get_grid_coors(*next_point)
     
     def _move_jeep(self, jeep_id, dx, dy, dt):
         """Move jeep toward destination"""
@@ -308,7 +328,3 @@ class JeepRoute:
             self.exact_position[jeep_id][1] += math.copysign(move_distance, dy)
             self.isMovingAlongX[jeep_id] = False
             self.isInReverse[jeep_id] = dy < 0
-
-        # Update grid-aligned location
-        self.jeepLocation[jeep_id] = (int(self.exact_position[jeep_id][0]),
-                                      int(self.exact_position[jeep_id][1]))

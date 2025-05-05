@@ -124,7 +124,7 @@ def handle_completed_passengers():
     sim_state.active_passengers = [p for p in sim_state.active_passengers if p not in completed]
     
     for p in completed:
-        sim_state.metrics['total_commute'] += p.simulation_time
+        sim_state.metrics['total_commute'] += p.real_time
         sim_state.metrics['total_fitness'] += 100 * math.exp(-p.journey_time/60)
     sim_state.metrics['completed'] += len(completed)
     return completed
@@ -145,7 +145,7 @@ def update_waiting_passengers(dt):
             total_waiting += 1
 
     sim_state.waiting_passengers = waiting
-    sim_state.metrics['total_wait'] += total_waiting * dt  # Uses simulation time delta
+    sim_state.metrics['total_wait'] += total_waiting * dt  # This is fine as dt scales with speed
     sim_state.metrics['max_waiting'] = max(sim_state.metrics['max_waiting'], total_waiting)
 
 def update_passengers(dt):
@@ -305,9 +305,6 @@ def main_loop():
         alpha = min(1.0, raw_dt / 0.1)
         sim_state.current_speed += (sim_state.target_speed - sim_state.current_speed) * alpha
         dt = raw_dt * sim_state.current_speed
-        
-        # Track simulation time
-        sim_state.simulation_time += dt
 
         # Event handling
         for event in pygame.event.get():
@@ -319,8 +316,10 @@ def main_loop():
 
         # Simulation update
         if sim_state.metrics['completed'] < GA_CONFIG['target_completed']:
+            # Update simulation time
+            sim_state.simulation_time += dt
+            
             spawn_passengers(dt)
-            # Use the same dt for both movement and time tracking
             update_passengers(dt)
             
             # Update jeeps using the same dt

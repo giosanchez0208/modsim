@@ -10,6 +10,10 @@ TRANSITION_PENALTY = 30
 TRANSFER_PENALTY = 30
 WALKING_SPEED = 50
 
+# Constants for boarding and alighting
+MIN_BOARDING_THRESHOLD = 20  # Minimum threshold regardless of dt
+BASE_BOARDING_THRESHOLD = 150  # Base threshold before dt multiplier
+
 class TravelGraph:
     def __init__(self):
         self.graph = {}
@@ -203,6 +207,7 @@ class TravelGraph:
         }
 class Passenger:
     def __init__(self, origin=None, destination=None):
+        self.real_time = 0.0
         self.origin = origin
         self.destination = destination
         self.route = []
@@ -219,6 +224,9 @@ class Passenger:
         self.real_time = 0.0  # For penalties
         # Track where to alight once on a jeep
         self._alight_step_index = None
+        # Track boarding attempts
+        self.boarding_attempts = 0
+        self.last_boarding_check = 0
 
     def plan_route(self, travel_graph):
         if not self.origin or not self.destination:
@@ -242,19 +250,20 @@ class Passenger:
         self.destination = destination
 
     def update_position(self, travel_graph, dt, jeep_routes):
+        self.real_time += dt
         if self.state == "arrived" or not self.route:
             return
 
         current_node = self.route[self.current_step]
 
         if self.state == "waiting_jeep":
-            self._handle_jeep_boarding(current_node, jeep_routes)
+            self._handle_jeep_boarding(current_node, jeep_routes, dt)
         elif self.state == "on_jeep":
-            self._handle_jeep_ride()
+            self._handle_jeep_ride(dt)  # Pass dt to alighting handler
         else:
             self._handle_walking(travel_graph, current_node, dt)
 
-    
+        
     def _handle_walking(self, travel_graph, current_node, dt):
         # If there is no "next" node, we've arrived ---
         if self.current_step >= len(self.route) - 1:
@@ -298,16 +307,40 @@ class Passenger:
             self.current_step += 1
             if isinstance(next_node, tuple) and len(next_node) == 3 and next_node[1] == 'transition':
                 self.state = "waiting_jeep"
+                self.boarding_attempts = 0  # Reset boarding attempts when newly waiting
                 
-    def _handle_jeep_boarding(self, current_node, jeep_routes):
+    def _handle_jeep_boarding(self, current_node, jeep_routes, dt):
         _, _, jeep_id = current_node
         target_jeep = jeep_routes[jeep_id]
+        
+        # Don't check for boarding on every frame to improve performance and avoid too-frequent checks
+        self.last_boarding_check += dt
+        
+        # Check every 0.1 seconds, scaled by dt to handle different simulation speeds
+        if self.last_boarding_check < 0.1:
+            return
+            
+        self.last_boarding_check = 0  # Reset check timer
+        self.boarding_attempts += 1
         
         # Check distance to both jeeps on the route
         closest_jeep_id = None
         min_distance = float('inf')
         
+        # Fixed minimum threshold + dynamic component based on dt
+        # At really slow speeds (dt ≈ 0), we still get at least MIN_BOARDING_THRESHOLD
+        threshold = MIN_BOARDING_THRESHOLD + (BASE_BOARDING_THRESHOLD * dt)
+        
+        # Increase threshold with boarding attempts to ensure passengers can board eventually
+        # This helps when simulation speeds are very low
+        if self.boarding_attempts > 10:
+            threshold += min(self.boarding_attempts - 10, 20)  # Add up to +20
+        
         for i in range(2):  # Check both jeeps
+            # Calculate true distance
+            if target_jeep.jeepLocation[i] is None:
+                continue
+                
             dx = target_jeep.jeepLocation[i][0] - self.position[0]
             dy = target_jeep.jeepLocation[i][1] - self.position[1]
             distance = math.sqrt(dx**2 + dy**2)
@@ -317,49 +350,97 @@ class Passenger:
                 closest_jeep_id = i
 
         # Only board if closest jeep is near enough AND has capacity
-        if min_distance < 5:
+        if closest_jeep_id is not None and min_distance < threshold:
             if target_jeep.passengerAmt[closest_jeep_id] < target_jeep.MAX_CAPACITY:
                 self.state = "on_jeep"
                 self.current_jeep = target_jeep
-                self.current_jeep_id = closest_jeep_id  # Store which jeep we're on
+                self.current_jeep_id = closest_jeep_id
                 self.current_jeep.modifyPassenger(1, closest_jeep_id)
 
                 # Find & stash the last 'transition' step for this jeep
                 last_trans_idx = None
                 for idx in range(self.current_step, len(self.route)):
                     node = self.route[idx]
-                    if (isinstance(node, tuple) and len(node) == 3
-                            and node[1] == 'transition'
-                            and node[2] == jeep_id):
-                        last_trans_idx = idx
+                    if isinstance(node, tuple) and len(node) == 3 and node[1] == 'transition':
+                        if node[2] == jeep_id:
+                            last_trans_idx = idx
+                        elif last_trans_idx is not None:
+                            # If we've found our last step and now we're seeing a different transition,
+                            # that means we've reached the end of this jeep segment
+                            break
 
                 # Stash it for the ride handler
                 self._alight_step_index = last_trans_idx
 
-                # Compute exact alight coordinate
+                # Compute exact alight coordinate and store the grid position
                 if last_trans_idx is not None and last_trans_idx + 1 < len(self.route):
-                    alight_grid = self.route[last_trans_idx + 1]
-                    self.alight_point = grid.get_grid_coors(*(
-                        alight_grid[0] if len(alight_grid) == 3 else alight_grid
-                    ))
-
-    def _handle_jeep_ride(self):
+                    next_node = self.route[last_trans_idx + 1]
+                    alight_grid = next_node[0] if len(next_node) == 3 else next_node
+                    self.alight_point = alight_grid
+                    self.alight_screen_pos = grid.get_grid_coors(*alight_grid)
+                
+    def _handle_jeep_ride(self, dt):
         # Update position to current jeep's location
         self.position = self.current_jeep.jeepLocation[self.current_jeep_id]
         
-        # Check if reached alight point
-        current_jeep_grid_pos = self.current_jeep.route_points[self.current_jeep.current_route_index[self.current_jeep_id]]
-        current_jeep_screen_pos = grid.get_grid_coors(*current_jeep_grid_pos)
+        # Track current jeep position in grid coordinates
+        jeep_grid_pos = self.current_jeep.route_points[
+            self.current_jeep.current_route_index[self.current_jeep_id]
+        ]
         
-        if self.alight_point is not None and current_jeep_screen_pos == self.alight_point:
-            self.current_jeep.modifyPassenger(-1, self.current_jeep_id)
-            self.current_jeep = None
-            self.current_jeep_id = None  # Reset jeep ID
-
-            # Jump to just after the transition we alighted from
-            if self._alight_step_index is not None:
-                self.current_step = self._alight_step_index + 1
-            self.state = "walking"
+        # Check if we're at the alighting point (grid-based rather than pixel-based)
+        # This is more reliable, especially at varying speeds
+        if self.alight_point and jeep_grid_pos == self.alight_point:
+            self._alight_from_jeep()
+            return
+            
+        # Also check if we passed our stop
+        if hasattr(self, 'alight_screen_pos'):
+            # Get previous grid position
+            prev_idx = (self.current_jeep.current_route_index[self.current_jeep_id] - 1) % len(self.current_jeep.route_points)
+            prev_grid_pos = self.current_jeep.route_points[prev_idx]
+            
+            # Get next grid position 
+            next_idx = (self.current_jeep.current_route_index[self.current_jeep_id] + 1) % len(self.current_jeep.route_points)
+            next_grid_pos = self.current_jeep.route_points[next_idx]
+            
+            # Check if alight point is between prev and next points on the route
+            passed_alight = False
+            
+            # If the jeep is moving horizontally (x-axis)
+            if prev_grid_pos[1] == jeep_grid_pos[1] == next_grid_pos[1]:
+                # Check if alight_point is on same y-coordinate
+                if self.alight_point[1] == jeep_grid_pos[1]:
+                    # Check if it's between prev and next x-coordinates (including wraparound)
+                    if ((prev_grid_pos[0] <= self.alight_point[0] <= next_grid_pos[0]) or 
+                        (next_grid_pos[0] <= self.alight_point[0] <= prev_grid_pos[0])):
+                        passed_alight = True
+                        
+            # If the jeep is moving vertically (y-axis)
+            elif prev_grid_pos[0] == jeep_grid_pos[0] == next_grid_pos[0]:
+                # Check if alight_point is on same x-coordinate
+                if self.alight_point[0] == jeep_grid_pos[0]:
+                    # Check if it's between prev and next y-coordinates (including wraparound)
+                    if ((prev_grid_pos[1] <= self.alight_point[1] <= next_grid_pos[1]) or 
+                        (next_grid_pos[1] <= self.alight_point[1] <= prev_grid_pos[1])):
+                        passed_alight = True
+            
+            if passed_alight:
+                self._alight_from_jeep()
+                return
+    
+    def _alight_from_jeep(self):
+        """Helper method to handle alighting logic"""
+        self.current_jeep.modifyPassenger(-1, self.current_jeep_id)
+        self.current_jeep = None
+        self.current_jeep_id = None
+        self.current_step = self._alight_step_index + 1 if self._alight_step_index else len(self.route)
+        self.state = "walking"
+        # Reset boarding-related variables
+        self.boarding_attempts = 0
+        # Place passenger exactly at alight point
+        if hasattr(self, 'alight_screen_pos'):
+            self.position = self.alight_screen_pos
 
     def draw(self, screen):
         if self.state in ("on_jeep", "arrived"):
