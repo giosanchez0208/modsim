@@ -214,6 +214,9 @@ class Passenger:
         self.alight_point = None
         self.speed = WALKING_COST + random.randint(-10, 10)
         self.state = "waiting"
+        self.journey_time = 0.0
+        self.simulation_time = 0.0  # For commute metrics
+        self.real_time = 0.0  # For penalties
         # Track where to alight once on a jeep
         self._alight_step_index = None
 
